@@ -13,57 +13,120 @@ interface GitHubRepo {
   description: string;
   stars: string;
   forks: string;
-  language: string;
+  language: string[];
   trendingReason?: string;
+}
+
+async function fetchAllLanguages(repoUrl: string): Promise<string[]> {
+  try {
+    const response = await fetch(repoUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      },
+    });
+    if (!response.ok) return ["Unknown"];
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const languages: string[] = [];
+
+    $("ul.RepositoryProgress-list li, a.d-inline-flex.flex-items-center.flex-nowrap.no-underline").each((_, element) => {
+      const text = $(element).text().replace(/\s+/g, " ").trim();
+      if (text) {
+        languages.push(text);
+      }
+    });
+
+    if (languages.length === 0) {
+      $("span.color-fg-default.text-bold").each((_, element) => {
+        const name = $(element).text().trim();
+        const percent = $(element).next("span").text().trim();
+        if (name) {
+          languages.push(`${name} ${percent}`);
+        }
+      });
+    }
+
+    return languages.length > 0 ? languages : ["Unknown"];
+  } catch (error) {
+    console.error(`Lỗi khi lấy ngôn ngữ chi tiết tại ${repoUrl}:`, error);
+    return ["Unknown"];
+  }
 }
 
 async function fetchGitHubTrending(): Promise<GitHubRepo[]> {
   try {
     const response = await fetch("https://github.com/trending", {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
       },
     });
     const html = await response.text();
-
     const $ = cheerio.load(html);
-    const repos: GitHubRepo[] = [];
+    const baseRepos: Omit<GitHubRepo, "languages">[] = [];
 
-    $("article.Box-row").each((_idx: number, element: cheerio.Element) => {
+    $("article.Box-row").each((idx, element) => {
       const $repo = $(element);
       const titleLink = $repo.find("h2.h3 a");
       const title = titleLink.text().replace(/\s+/g, "").trim();
       const url = `https://github.com${titleLink.attr("href")}`;
       const description = $repo.find("p.col-9").text().trim();
-      const language =
-        $repo.find('[itemprop="programmingLanguage"]').text().trim() ||
-        "Unknown";
 
       const metaText = $repo.find("div.f6.color-fg-muted");
       const stars = metaText.find(`a[href$="/stargazers"]`).text().trim();
       const forks = metaText.find(`a[href$="/forks"]`).text().trim();
 
-      repos.push({ title, url, description, language, stars, forks });
+      baseRepos.push({ title, url, description, stars, forks });
     });
 
-    return repos;
+    const fullRepos: GitHubRepo[] = [];
+
+    for (const repo of baseRepos) {
+      console.log(`Đang quét danh sách ngôn ngữ của: ${repo.title}...`);
+      const languages = await fetchAllLanguages(repo.url);
+
+      fullRepos.push({
+        ...repo,
+        languages
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    return fullRepos;
   } catch (error) {
-    console.error("Lỗi khi cào dữ liệu GitHub:", error);
+    console.error("Lỗi khi cào dữ liệu từ GitHub:", error);
     return [];
   }
 }
 
-async function analyzeWhyItIsTrending(repo: GitHubRepo): Promise<string> {
-  if (!openRouterApiKey) {
-    return "";
-  }
-
+async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string> {
   try {
-    const prompt = `Bạn là một chuyên gia công nghệ. Hãy phân tích ngắn gọn trong 1-2 câu lý do vì sao kho lưu trữ (repository) GitHub sau đây lại đang thịnh hành (trending). Dựa vào tên, ngôn ngữ và mô tả của nó. Trả lời bằng tiếng Việt.
-    - Tên: ${repo.title}
-    - Ngôn ngữ: ${repo.language}
-    - Mô tả: ${repo.description}`;
+    const fallbackReasons = repos.map(() => "");
+
+    if (!openRouterApiKey) {
+      return fallbackReasons;
+    }
+
+    const repoListString = repos.map((r, i) =>
+      `Repo #${i + 1}:\n- Tên: ${r.title}\n- Các ngôn ngữ sử dụng: ${r.languages.join(", ")}\n- Mô tả: ${r.description}`
+    ).join("\n\n");
+
+    const prompt = `Bạn là một chuyên gia công nghệ. Hãy phân tích ngắn gọn trong 1-2 câu lý do tại sao từng kho lưu trữ (repository) dưới đây lại đang thịnh hành (trending) trên GitHub gần đây dựa trên tên, các cấu trúc ngôn ngữ và mô tả của nó.
+      
+    Yêu cầu bắt buộc về định dạng đầu ra:
+    Trả về duy nhất một mảng JSON chứa các chuỗi văn bản (Array of strings) theo đúng thứ tự các repo.
+    Ví dụ cấu trúc trả về bắt buộc:
+    [
+      "Lý do repo 1 hot...",
+      "Lý do repo 2 hot..."
+    ]
+
+    Tuyệt đối không viết thêm bất kỳ chữ giải thích nào ngoài khối mảng JSON này.
+
+    Dưới đây là danh sách repo cần phân tích:
+    ${repoListString}`;
+
     const response = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -81,11 +144,31 @@ async function analyzeWhyItIsTrending(repo: GitHubRepo): Promise<string> {
     );
 
     const data = await response.json();
-    const reason = data.choices[0].message.content;
-    return reason ? reason.trim() : "Chưa có phân tích cụ thể.";
+    const rawText = data?.choices?.[0]?.message?.content?.trim();
+
+    if (!rawText) {
+      console.warn("Mô hình AI trả về nội dung rỗng.");
+      return fallbackReasons;
+    }
+
+    if (rawText.startsWith("```")) {
+      rawText = rawText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    }
+
+    const parsedData = JSON.parse(rawText);
+
+    if (Array.isArray(parsedData)) {
+      return parsedData;
+    } else if (parsedData.reasons && Array.isArray(parsedData.reasons)) {
+      return parsedData.reasons;
+    } else if (typeof parsedData === "object") {
+      return Object.values(parsedData) as string[];
+    }
+
+    throw new Error("Không thể trích xuất mảng dữ liệu từ JSON của AI.");
   } catch (error) {
     console.error(`Lỗi phân tích repo ${repo.title}:`, error);
-    return "Lỗi khi kết nối với AI để phân tích.";
+    return fallbackReasons;
   }
 }
 
@@ -96,7 +179,6 @@ async function sendToSlack(repos: GitHubRepo[]) {
     return;
   }
 
-  // deno-lint-ignore no-explicit-any
   const blocks: any[] = [
     {
       type: "header",
@@ -106,32 +188,22 @@ async function sendToSlack(repos: GitHubRepo[]) {
         emoji: true,
       },
     },
-    {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: `*Thời gian:* ${new Date().toLocaleDateString("vi-VN")} | Tự động cập nhật`,
-        },
-      ],
-    },
     { type: "divider" },
   ];
 
   for (const repo of repos) {
+    const languageTags = repo.languages.map(lang => `\`${lang}\``).join(" ｜ ");
+
+    if (blocks.length + 2 > 50) {
+      break;
+    }
+
     blocks.push(
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*⭐ <${repo.url}|${repo.title}>* (${repo.language})\n📝 _${repo.description || "Không có mô tả."}_\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}`,
-        },
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `💡 *Vì sao đang hot:* ${repo.trendingReason}`,
+          text: `*⭐ <${repo.url}|${repo.title}>*\n🛠️ *Ngôn ngữ:* ${languageTags}\n📝 _${repo.description || "Không có mô tả sơ bộ."}_\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n ${repo.trendingReason?.trim()?.length > 0 ? `💡*Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
         },
       },
       { type: "divider" }
@@ -154,18 +226,18 @@ async function runJob() {
   console.log("Bắt đầu xử lý dữ liệu GitHub Trending...");
   const repos = await fetchGitHubTrending();
 
-  await Promise.all(
-    repos.map(async (repo) => {
-      repo.trendingReason = await analyzeWhyItIsTrending(repo);
-    })
-  );
+  const reasons = await analyzeWhyItIsTrending(repos);
+
+  repos.forEach((repo, index) => {
+    repo.trendingReason = reasons[index] || "";
+  });
 
   await sendToSlack(repos);
 }
 
 function isValidCron(expression: string): boolean {
   try {
-    new Cron(expression, () => {});
+    new Cron(expression, () => { });
     return true;
   } catch (error) {
     return false;
@@ -179,7 +251,7 @@ function startScheduler() {
     `Đang khởi chạy Scheduler với chế độ: (Cron: ${cronExpression})`
   );
 
-  new Cron(cronExpression,  { timezone: "Asia/Ho_Chi_Minh" } , () => {
+  new Cron(cronExpression, { timezone: "Asia/Ho_Chi_Minh" }, () => {
     runJob();
   });
 }
