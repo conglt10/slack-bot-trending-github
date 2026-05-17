@@ -4,6 +4,8 @@ import { WebClient } from "npm:@slack/web-api";
 
 const slackClient = new WebClient(Deno.env.get("SLACK_BOT_TOKEN"));
 const openRouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
+const cronExpr = Deno.args[0];
+const defaultCronExpr = "0 14 * * 1"; // Every Monday at 14h
 
 interface GitHubRepo {
   title: string;
@@ -161,20 +163,25 @@ async function runJob() {
   await sendToSlack(repos);
 }
 
-function startScheduler(frequency: "weekly" | "multi-weekly" = "weekly") {
-  let cronExpression = "0 14 * * 1"; // Every Monday at 14h
-
-  if (frequency === "multi-weekly") {
-    cronExpression = "0 14 * * 1,3,5"; // Mon, Wed, Fri at 14h
+function isValidCron(expression: string): boolean {
+  try {
+    new Cron(expression, () => {});
+    return true;
+  } catch (error) {
+    return false;
   }
-  cronExpression = "12 10 * * *"
+}
+
+function startScheduler() {
+  let cronExpression = isValidCron(cronExpr) ? cronExpr : defaultCronExpr;
+
   console.log(
-    `Đang khởi chạy Scheduler với chế độ: [${frequency}] (Cron: ${cronExpression})`
+    `Đang khởi chạy Scheduler với chế độ: (Cron: ${cronExpression})`
   );
 
-  new Cron(cronExpression, () => {
+  new Cron(cronExpression,  { timezone: "Asia/Ho_Chi_Minh" } , () => {
     runJob();
   });
 }
 
-startScheduler("multi-weekly");
+startScheduler();
