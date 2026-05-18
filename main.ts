@@ -4,6 +4,7 @@ import { WebClient } from "npm:@slack/web-api";
 
 const slackClient = new WebClient(Deno.env.get("SLACK_BOT_TOKEN"));
 const openRouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
+const openRouterModel = Deno.env.get("OPENROUTER_MODEL") || "openai/gpt-oss-120b:free";
 const cronExpr = Deno.args[0];
 const defaultCronExpr = "0 14 * * 1"; // Every Monday at 14h
 
@@ -123,6 +124,7 @@ async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string> {
     ]
 
     Tuyệt đối không viết thêm bất kỳ chữ giải thích nào ngoài khối mảng JSON này.
+    Kết quả trả về sử dụng tiếng Việt
 
     Dưới đây là danh sách repo cần phân tích:
     ${repoListString}`;
@@ -136,7 +138,7 @@ async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string> {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "nvidia/nemotron-3-super-120b-a12b:free",
+          model: openRouterModel,
           messages: [{ role: "user", content: prompt }],
           tools: [{ type: "openrouter:web_search" }],
         }),
