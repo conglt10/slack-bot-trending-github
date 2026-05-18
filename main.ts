@@ -181,7 +181,7 @@ async function sendToSlack(repos: GitHubRepo[]) {
     return;
   }
 
-  const blocks: any[] = [
+  const mainBlocks: any[] = [
     {
       type: "header",
       text: {
@@ -190,37 +190,57 @@ async function sendToSlack(repos: GitHubRepo[]) {
         emoji: true,
       },
     },
-    { type: "divider" },
   ];
 
+  let thread_ts: string | undefined;
+
+  try {
+    const response = await slackClient.chat.postMessage({
+      channel,
+      text: "🚀 XU HƯỚNG TRÊN GITHUB TRONG TUẦN",
+      blocks: mainBlocks,
+    });
+    thread_ts = response.ts;
+    console.log("Đã gửi tin nhắn chính lên Slack thành công!");
+  } catch (error) {
+    console.error("Lỗi khi gửi tin nhắn chính Slack:", error);
+    return;
+  }
+
+  if (!thread_ts) {
+    console.error("Không nhận được thread_ts từ Slack Response.");
+    return;
+  }
+
+  const threadBlocks: any[] = [];
   for (const repo of repos) {
     const languageTags = repo.languages.map(lang => `\`${lang}\``).join(" ｜ ");
 
-    if (blocks.length + 2 > 50) {
+    if (threadBlocks.length >= 50) {
       break;
     }
 
-    blocks.push(
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*⭐ <${repo.url}|${repo.title}>*\n🛠️ *Ngôn ngữ:* ${languageTags}\n📝 _${repo.description || "Không có mô tả sơ bộ."}_\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n ${repo.trendingReason?.trim()?.length > 0 ? `💡*Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
-        },
+    threadBlocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*⭐ <${repo.url}|${repo.title}>*\n🛠️ *Ngôn ngữ:* ${languageTags}\n📝 _${repo.description || "Không có mô tả sơ bộ."}_\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n${repo.trendingReason?.trim()?.length > 0 ? `💡 *Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
       },
-      { type: "divider" }
-    );
+    });
   }
 
-  try {
-    await slackClient.chat.postMessage({
-      channel,
-      text: "Cập nhật tình hình GitHub Trending!",
-      blocks,
-    });
-    console.log("Đã gửi báo cáo lên Slack thành công!");
-  } catch (error) {
-    console.error("Lỗi khi gửi tin nhắn Slack:", error);
+  if (threadBlocks.length > 0) {
+    try {
+      await slackClient.chat.postMessage({
+        channel,
+        thread_ts,
+        text: "Chi tiết các dự án trending:",
+        blocks: threadBlocks,
+      });
+      console.log("Đã gửi nội dung chi tiết vào thread thành công!");
+    } catch (error) {
+      console.error("Lỗi khi gửi tin nhắn thread Slack:", error);
+    }
   }
 }
 
