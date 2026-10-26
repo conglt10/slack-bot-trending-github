@@ -1,6 +1,8 @@
 {
   "tasks": {
-    "dev": "deno run --watch main.ts"
+    "dev": "deno run --watch main.ts",
+    "start": "deno run --allow-net=slack.com,openrouter.ai,github.com --allow-env --allow-sys=osRelease --env main.ts",
+    "once": "deno task start --once"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1"
