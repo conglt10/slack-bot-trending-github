@@ -6,7 +6,7 @@ const slackClient = new WebClient(Deno.env.get("SLACK_BOT_TOKEN"));
 const openRouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
 const openRouterModel = Deno.env.get("OPENROUTER_MODEL") || "openai/gpt-oss-120b:free";
 const cronExpr = Deno.args[0];
-const defaultCronExpr = "0 14 * * 1"; // Every Monday at 14h
+const defaultCronExpr = "0 10 * * 1"; 
 
 interface GitHubRepo {
   title: string;
@@ -101,10 +101,10 @@ async function fetchGitHubTrending(): Promise<GitHubRepo[]> {
   }
 }
 
-async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string> {
-  try {
-    const fallbackReasons = repos.map(() => "");
+async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string[]> {
+  const fallbackReasons = repos.map(() => "");
 
+  try {
     if (!openRouterApiKey) {
       return fallbackReasons;
     }
@@ -169,7 +169,7 @@ async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string> {
 
     throw new Error("Không thể trích xuất mảng dữ liệu từ JSON của AI.");
   } catch (error) {
-    console.error(`Lỗi phân tích repo ${repo.title}:`, error);
+    console.error("Lỗi phân tích lý do trending:", error);
     return fallbackReasons;
   }
 }
@@ -224,7 +224,7 @@ async function sendToSlack(repos: GitHubRepo[]) {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*⭐ <${repo.url}|${repo.title}>*\n🛠️ *Ngôn ngữ:* ${languageTags}\n📝 _${repo.description || "Không có mô tả sơ bộ."}_\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n${repo.trendingReason?.trim()?.length > 0 ? `💡 *Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
+        text: `*⭐ <${repo.url}|${repo.title}>*\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n${repo.trendingReason?.trim()?.length > 0 ? `💡 *Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
       },
     });
   }
@@ -251,7 +251,8 @@ async function runJob() {
   const reasons = await analyzeWhyItIsTrending(repos);
 
   repos.forEach((repo, index) => {
-    repo.trendingReason = reasons[index] || "";
+    const reason = reasons[index]?.trim();
+    repo.trendingReason = reason && reason.length > 0 ? reason : repo.description;
   });
 
   await sendToSlack(repos);

@@ -1,12 +1,16 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@deno/installer-shell-setup@*": "0.3.4",
     "jsr:@hexagon/croner@10.0.1": "10.0.1",
     "jsr:@std/dotenv@*": "0.225.6",
     "npm:@slack/web-api@*": "7.16.0",
     "npm:cheerio@1": "1.2.0"
   },
   "jsr": {
+    "@deno/installer-shell-setup@0.3.4": {
+      "integrity": "48665d1a737d487cce6874bc97bba70a5aeffa7053aca3f60df93c6fab8963b4"
+    },
     "@hexagon/croner@10.0.1": {
       "integrity": "95120f312b5e63afaaa4861838fe2d7b42f32554d2af96b7524b072abf63dabd"
     },
