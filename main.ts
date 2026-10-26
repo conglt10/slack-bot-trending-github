@@ -5,8 +5,15 @@ import { WebClient } from "npm:@slack/web-api";
 const slackClient = new WebClient(Deno.env.get("SLACK_BOT_TOKEN"));
 const openRouterApiKey = Deno.env.get("OPENROUTER_API_KEY");
 const openRouterModel = Deno.env.get("OPENROUTER_MODEL") || "openai/gpt-oss-120b:free";
+
+// Deno Deploy sets DENO_DEPLOYMENT_ID. There, croner would block the isolate forever,
+// so we use Deno.cron + an HTTP handler instead.
+const isDenoDeploy = Deno.env.get("DENO_DEPLOYMENT_ID") !== undefined;
+
 const cronExpr = Deno.args[0];
-const defaultCronExpr = "0 10 * * 1"; 
+// Local runs are in Asia/Ho_Chi_Minh (UTC+7). Deno.cron always runs in UTC,
+// so "10:00 Monday" becomes "03:00 Monday" there.
+const defaultCronExpr = isDenoDeploy ? "0 3 * * 1" : "0 10 * * 1";
 
 interface GitHubRepo {
   title: string;
@@ -14,7 +21,7 @@ interface GitHubRepo {
   description: string;
   stars: string;
   forks: string;
-  language: string[];
+  languages: string[];
   trendingReason?: string;
 }
 
@@ -146,7 +153,7 @@ async function analyzeWhyItIsTrending(repos: GitHubRepo[]): Promise<string[]> {
     );
 
     const data = await response.json();
-    const rawText = data?.choices?.[0]?.message?.content?.trim();
+    let rawText = data?.choices?.[0]?.message?.content?.trim();
 
     if (!rawText) {
       console.warn("Mô hình AI trả về nội dung rỗng.");
@@ -224,7 +231,7 @@ async function sendToSlack(repos: GitHubRepo[]) {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*⭐ <${repo.url}|${repo.title}>*\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n${repo.trendingReason?.trim()?.length > 0 ? `💡 *Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
+        text: `*⭐ <${repo.url}|${repo.title}>*\n📊 *Stars:* ${repo.stars} | *Forks:* ${repo.forks}\n${(repo.trendingReason?.trim().length ?? 0) > 0 ? `💡 *Tại sao đang HOT:* ${repo.trendingReason}` : ""}`,
       },
     });
   }
@@ -244,7 +251,7 @@ async function sendToSlack(repos: GitHubRepo[]) {
   }
 }
 
-async function runJob() {
+export async function runJob() {
   console.log("Bắt đầu xử lý dữ liệu GitHub Trending...");
   const repos = await fetchGitHubTrending();
 
@@ -268,7 +275,9 @@ function isValidCron(expression: string): boolean {
 }
 
 function startScheduler() {
-  let cronExpression = isValidCron(cronExpr) ? cronExpr : defaultCronExpr;
+  const cronExpression = cronExpr && isValidCron(cronExpr)
+    ? cronExpr
+    : defaultCronExpr;
 
   console.log(
     `Đang khởi chạy Scheduler với chế độ: (Cron: ${cronExpression})`
@@ -279,4 +288,52 @@ function startScheduler() {
   });
 }
 
-startScheduler();
+function startDeployServer() {
+  const cronExpression = cronExpr && isValidCron(cronExpr)
+    ? cronExpr
+    : defaultCronExpr;
+
+  // Must be registered during the first evaluation of the isolate,
+  // otherwise Deno Deploy reports "Register crons" as failed.
+  Deno.cron("github-trending-to-slack", cronExpression, async () => {
+    // Cron jobs are registered on every timeline (production, preview, git branch),
+    // so skip non-production ones to avoid duplicate Slack messages.
+    const timeline = Deno.env.get("DENO_TIMELINE");
+    if (timeline && timeline !== "production") {
+      console.log(`Bỏ qua cron: timeline "${timeline}" không phải production.`);
+      return;
+    }
+
+    await runJob();
+  });
+
+  const triggerToken = Deno.env.get("TRIGGER_TOKEN");
+
+  Deno.serve((req) => {
+    const url = new URL(req.url);
+
+    // Optional manual trigger: /run?token=<TRIGGER_TOKEN>
+    if (
+      url.pathname === "/run" &&
+      triggerToken &&
+      url.searchParams.get("token") === triggerToken
+    ) {
+      runJob().catch((error) => console.error("Lỗi khi chạy job:", error));
+      return new Response("started\n");
+    }
+
+    return new Response("ok\n");
+  });
+
+  console.log(
+    `Deno Deploy: đã đăng ký cron "${cronExpression}" (UTC) và HTTP handler.`
+  );
+}
+
+if (isDenoDeploy) {
+  startDeployServer();
+} else if (Deno.args.includes("--once")) {
+  await runJob();
+} else {
+  startScheduler();
+}
